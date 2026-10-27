@@ -4,7 +4,7 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-  if (!process.env.GEMINI_API_KEY) return res.status(503).json({ error: "Gemini is not configured. Add GEMINI_API_KEY in Vercel Production environment variables." });
+  if (!process.env.GEMINI_API_KEY) return res.status(503).json({ error: "محرك التحليل غير مهيأ. تحقّق من إعداد GEMINI_API_KEY في بيئة الإنتاج على Vercel." });
 
   try {
     const { frames, taskName, station, model, notes, videoDuration } = req.body || {};
@@ -42,7 +42,7 @@ export default async function handler(req, res) {
       headers: { "x-goog-api-key": process.env.GEMINI_API_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ role: "user", parts }],
-        generationConfig: { responseMimeType: "application/json", maxOutputTokens: 4500, temperature: 0.2 }
+        generationConfig: { responseMimeType: "application/json", maxOutputTokens: 7000, temperature: 0.1 }
       })
     });
 
@@ -53,14 +53,24 @@ export default async function handler(req, res) {
       return res.status(status).json({ error: apiMessage });
     }
     const text = (payload.candidates || []).flatMap(c => c.content?.parts || []).map(p => p.text || "").join("\n").trim();
-    if (!text) return res.status(502).json({ error: "Gemini returned no text. Try a shorter or clearer video." });
+    if (!text) return res.status(502).json({ error: "لم يُرجع النموذج نصًا للتحليل. جرّب فيديو أقصر أو أوضح." });
 
     let result;
     try {
-      const clean = text.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
-      result = JSON.parse(clean);
+      let clean = text.replace(/^\\s*```(?:json)?\\s*/i, "").replace(/\\s*```\\s*$/, "").trim();
+      try { result = JSON.parse(clean); }
+      catch {
+        const firstBrace = clean.indexOf("{");
+        const lastBrace = clean.lastIndexOf("}");
+        if (firstBrace < 0 || lastBrace <= firstBrace) throw new Error("No JSON object found");
+        clean = clean.slice(firstBrace, lastBrace + 1).replace(/,\\s*([}\\]])/g, "$1");
+        result = JSON.parse(clean);
+      }
+      if (!result || typeof result !== "object" || !Array.isArray(result.elements)) throw new Error("Missing required analysis fields");
     } catch {
-      return res.status(502).json({ error: "Gemini did not return valid structured JSON. Please retry." });
+      const finishReason = payload.candidates?.[0]?.finishReason || "unknown";
+      const message = finishReason === "MAX_TOKENS" ? "التحليل أطول من الحد المسموح. جرّب فيديو أقصر أو أعد المحاولة." : "لم يُرجع النموذج نتيجة منظمة قابلة للقراءة. جرّب إعادة التحليل؛ وإذا تكرر الخطأ فقصّر الفيديو.";
+      return res.status(502).json({ error: message, finishReason });
     }
     return res.status(200).json({ result, model: modelName, sampledFrames: validFrames, provider: "Gemini API" });
   } catch (e) {
