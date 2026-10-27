@@ -13,13 +13,14 @@ export default async function handler(req, res) {
 
     const parts = [{
       text: [
-        "You are an industrial engineering assistant conducting a PRELIMINARY video-based time study.",
+        "أنت خبير هندسة صناعية تجري دراسة زمن أولية لعملية إنتاجية اعتمادًا على الفيديو.",
+        "لغة الإخراج إلزاميًا: العربية الفصحى السليمة والواضحة، بأسلوب مهني هندسي، مع قواعد وإملاء ونحو صحيحين. لا تستخدم الإنجليزية في النصوص التفسيرية أو التوصيات أو أسماء العناصر إلا للمصطلحات الفنية القياسية والرموز المطلوبة في بنية البيانات. أبقِ أسماء مفاتيح JSON كما هي بالإنجليزية، لكن اجعل جميع القيم النصية باللغة العربية. استخدم صياغة مباشرة ومفهومة، وتجنب الترجمة الحرفية والعبارات الركيكة واللهجة العامية.",
         "Frames are sampled from one worker performing one operation. Each frame has a timestamp in seconds. Infer only what is visually supported. Do not invent exact event boundaries between sparse frames; mark estimates approximate and confidence low when needed.",
         "Return ONLY valid JSON with keys: summary, cycle_time_estimate_s, confidence, limitations, elements, motion_observations, improvement_opportunities, reviewer_checks.",
-        "elements must be an array of objects: {name, start_s, end_s, duration_s, category, evidence, confidence, needs_review}. Use category 'VA', 'NVA', or 'Unclassified'; classifications are provisional.",
-        "motion_observations and improvement_opportunities must be arrays of concise strings. reviewer_checks must be an array of items requiring human validation.",
+        "elements must be an array of objects: {name, start_s, end_s, duration_s, category, evidence, confidence, needs_review}. Write name and evidence in correct Arabic. Use category exactly 'VA', 'NVA', or 'Unclassified'; classifications are provisional. In all other text fields, use Arabic.",
+        "motion_observations and improvement_opportunities must be arrays of concise, grammatically correct Arabic strings. reviewer_checks must be an array of Arabic items requiring human validation. summary and limitations must also be written in professional Modern Standard Arabic.",
         "Timestamps are reference times, not guaranteed exact event boundaries. Do not claim standard time, rating-adjusted time, allowances, or statistical sufficiency from one video.",
-        "Operation: " + taskName + "; station: " + station + "; model: " + (model || "unspecified") + "; video duration seconds: " + (videoDuration || "unknown") + "; notes: " + (notes || "none") + ".",
+        "بيانات العملية: اسم العملية: " + taskName + "؛ المحطة: " + station + "؛ الطراز: " + (model || "غير محدد") + "؛ مدة الفيديو بالثواني: " + (videoDuration || "غير معروفة") + "؛ ملاحظات المستخدم: " + (notes || "لا توجد") + ".",
         "Frames follow in chronological order. Each image is preceded by its timestamp."
       ].join("\n")
     }];
