@@ -129,9 +129,16 @@
     <div class="field"><label>الموديل / العائلة</label><input id="videoModel" value="Common"></div>
     <div class="field"><label>ملاحظات للمحلل</label><textarea id="videoNotes" placeholder="مثال: ابدأ التوقيت عند لمس أول جزء، وانتهِ عند اكتمال التثبيت."></textarea></div>
    </div>
-   <div class="form-actions"><button class="primary" onclick="prepareVideoStudy()">تجهيز طلب التحليل</button><button class="secondary" onclick="downloadVideoStudyTemplate()">تصدير نموذج دراسة الزمن</button></div>
+   <div class="form-actions"><button class="primary" onclick="prepareVideoStudy()">تحليل الفيديو بالذكاء الاصطناعي</button><button class="secondary" onclick="downloadVideoStudyTemplate()">تصدير نموذج دراسة الزمن</button></div>
    <div id="videoStatus" class="sub" style="margin-top:12px;line-height:1.8">بعد ربط محرك التحليل، ستظهر هنا حالة المعالجة ونتائجها للمراجعة.</div>
   </div>
+ </div>
+ <div class="panel" id="videoResultsPanel" style="display:none">
+  <div class="panel-title"><h3>نتائج التحليل الأولي</h3><button class="secondary" onclick="exportVideoAnalysis()">تصدير النتائج CSV</button></div>
+  <div id="videoAnalysisSummary" style="line-height:1.9;font-size:13px"></div>
+  <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>عنصر العمل</th><th>بداية (ث)</th><th>نهاية (ث)</th><th>المدة (ث)</th><th>التصنيف</th><th>الثقة</th><th>مراجعة؟</th></tr></thead><tbody id="videoElementsRows"></tbody></table></div>
+  <div class="grid2" style="margin-top:14px"><div><h4>ملاحظات الحركة</h4><ul id="videoMotionRows"></ul></div><div><h4>فرص التحسين</h4><ul id="videoImprovementRows"></ul></div></div>
+  <div class="notice" style="margin-top:12px">نتائج تقديرية من عينات إطارات وليست قياسًا معتمدًا. راجع الفيديو وحدود كل عنصر قبل الاستخدام الهندسي.</div>
  </div>
  <div class="panel">
   <div class="panel-title"><h3>3. المخرجات التي سيجهزها محرك التحليل</h3><span class="sub">مراجعة بشرية مطلوبة</span></div>
@@ -239,14 +246,42 @@ document.getElementById('videoFile').addEventListener('change',function(){
  videoObjectUrl=URL.createObjectURL(f);v.src=videoObjectUrl;v.style.display='block';
  meta.textContent=f.name+' · '+(f.size/1024/1024).toFixed(1)+' MB · '+(f.type||'video');
 });
-function prepareVideoStudy(){
- const f=document.getElementById('videoFile').files[0];
- const name=val('videoTaskName').trim();
- if(!f)return toast('اختَر فيديو للعملية أولًا');
- if(!name)return toast('اكتب اسم العملية أولًا');
- if(!val('videoStation'))return toast('أضف محطة واحدة على الأقل من صفحة محطات الخط');
- document.getElementById('videoStatus').innerHTML='<b style="color:var(--burgundy)">تم تجهيز بيانات الدراسة.</b><br>محرك التحليل غير متصل بعد. لم يتم تحليل الفيديو أو استخراج أزمنة تلقائية. البيانات التي أدخلتها لم تُرسل إلى أي خادم.';
- toast('تم التحقق من بيانات الطلب فقط');
+let latestVideoAnalysis=null;
+async function sampleVideoFrames(file,count=8){
+ const url=URL.createObjectURL(file),v=document.createElement('video');v.muted=true;v.playsInline=true;v.preload='metadata';v.src=url;
+ try{await new Promise((resolve,reject)=>{v.onloadedmetadata=resolve;v.onerror=()=>reject(new Error('تعذر قراءة الفيديو'))});
+ const duration=v.duration;if(!Number.isFinite(duration)||duration<=0)throw new Error('مدة الفيديو غير صالحة');
+ const c=document.createElement('canvas'),ctx=c.getContext('2d'),scale=Math.min(1,640/(v.videoWidth||640),360/(v.videoHeight||360));
+ c.width=Math.max(1,Math.round((v.videoWidth||640)*scale));c.height=Math.max(1,Math.round((v.videoHeight||360)*scale));const frames=[];
+ for(let i=0;i<count;i++){const t=duration*i/(count-1);await new Promise((resolve,reject)=>{v.onseeked=resolve;v.onerror=()=>reject(new Error('تعذر استخراج إطار'));v.currentTime=Math.min(t,Math.max(0,duration-.05))});ctx.drawImage(v,0,0,c.width,c.height);frames.push({t:Number(v.currentTime.toFixed(2)),image:c.toDataURL('image/jpeg',.58)})}
+ return {frames,duration};
+ }finally{URL.revokeObjectURL(url);v.removeAttribute('src');v.load()}
+}
+async function prepareVideoStudy(){
+ const f=document.getElementById('videoFile').files[0],name=val('videoTaskName').trim(),station=val('videoStation');
+ if(!f)return toast('اختَر فيديو للعملية أولًا');if(!name)return toast('اكتب اسم العملية أولًا');if(!station)return toast('أضف محطة واحدة على الأقل');
+ if(f.size>100*1024*1024)return toast('حجم الفيديو أكبر من 100 MB؛ قصّ المقطع أو قلل حجمه');
+ const status=document.getElementById('videoStatus'),btn=document.querySelector('#page-video button.primary');btn.disabled=true;btn.textContent='جارٍ التحليل...';status.textContent='جارٍ استخراج إطارات تمثيلية وإرسالها لمحرك الرؤية.';
+ try{const {frames,duration}=await sampleVideoFrames(f,8);
+ const resp=await fetch('/api/analyze-video',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({frames,taskName:name,station,model:val('videoModel'),notes:val('videoNotes'),videoDuration:duration})});
+ const data=await resp.json();if(!resp.ok)throw new Error(data.error||'فشل تحليل الفيديو');
+ latestVideoAnalysis={...data.result,meta:{taskName:name,station,operator:val('videoOperator'),model:val('videoModel'),videoFile:f.name,duration_s:duration,analyzedAt:new Date().toISOString(),engine:data.model,frames:data.sampledFrames}};
+ renderVideoAnalysis(latestVideoAnalysis);status.innerHTML='<b style="color:var(--green)">اكتمل التحليل الأولي.</b> راجع التوقيتات يدويًا قبل اعتمادها.';toast('اكتمل التحليل الأولي');
+ }catch(e){status.innerHTML='<b style="color:var(--red)">تعذر التحليل:</b> '+esc(e.message)+'<br>تحقق من نشر API وضبط OPENAI_API_KEY في Vercel.';toast('لم يكتمل تحليل الفيديو')}
+ finally{btn.disabled=false;btn.textContent='تحليل الفيديو بالذكاء الاصطناعي'}
+}
+function renderVideoAnalysis(r){
+ document.getElementById('videoResultsPanel').style.display='block';
+ document.getElementById('videoAnalysisSummary').innerHTML='<b>ملخص:</b> '+esc(r.summary||'—')+'<br><b>زمن الدورة التقديري:</b> '+esc(r.cycle_time_estimate_s??'—')+' ثانية<br><b>الثقة:</b> '+esc(r.confidence||'غير محدد')+'<br><b>القيود:</b> '+esc(Array.isArray(r.limitations)?r.limitations.join(' · '):r.limitations||'—');
+ document.getElementById('videoElementsRows').innerHTML=(r.elements||[]).map(e=>'<tr><td>'+esc(e.name||'—')+'</td><td>'+esc(e.start_s??'—')+'</td><td>'+esc(e.end_s??'—')+'</td><td>'+esc(e.duration_s??'—')+'</td><td>'+esc(e.category||'Unclassified')+'</td><td>'+esc(e.confidence||'—')+'</td><td><span class="tag warn">'+(e.needs_review===false?'راجع للتأكيد':'مطلوب')+'</span></td></tr>').join('')||'<tr><td colspan="7">لم يتم تحديد عناصر؛ أعد المحاولة بفيديو أوضح.</td></tr>';
+ const fill=(id,a)=>document.getElementById(id).innerHTML=(Array.isArray(a)?a:[]).map(x=>'<li>'+esc(typeof x==='string'?x:JSON.stringify(x))+'</li>').join('')||'<li>لا توجد ملاحظات.</li>';
+ fill('videoMotionRows',r.motion_observations);fill('videoImprovementRows',r.improvement_opportunities);
+}
+function exportVideoAnalysis(){
+ if(!latestVideoAnalysis)return toast('لا توجد نتائج لتصديرها');const r=latestVideoAnalysis,rows=[['Field','Value'],...Object.entries(r.meta||{}),['Summary',r.summary||''],['Estimated Cycle Time (s)',r.cycle_time_estimate_s??''],['Confidence',r.confidence||''],[],['Element','Start (s)','End (s)','Duration (s)','Category','Evidence','Confidence','Needs Review']];
+ (r.elements||[]).forEach(e=>rows.push([e.name,e.start_s,e.end_s,e.duration_s,e.category,e.evidence,e.confidence,e.needs_review]));
+ rows.push([],['Motion observations'],...(r.motion_observations||[]).map(x=>[x]),[],['Improvement opportunities'],...(r.improvement_opportunities||[]).map(x=>[x]),[],['Reviewer checks'],...(r.reviewer_checks||[]).map(x=>[typeof x==='string'?x:JSON.stringify(x)]));
+ const csv=rows.map(row=>row.map(x=>'"'+String(x??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));a.download='video-time-study-'+today()+'.csv';a.click();URL.revokeObjectURL(a.href);toast('تم تنزيل نتائج التحليل بصيغة CSV');
 }
 function downloadVideoStudyTemplate(){
  const rows=[
