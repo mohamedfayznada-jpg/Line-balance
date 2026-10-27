@@ -111,7 +111,7 @@
 
 <section class="page" id="page-video">
  <div class="page-head"><div><h2>الخطوة 5: تحليل فيديو العملية</h2><p>ارفع فيديو لعامل واحد ينفذ عملية واحدة، وراجع إعدادات الدراسة قبل التحليل.</p></div><span class="pill">VIDEO TIME STUDY</span></div>
- <div class="notice"><strong>حالة الميزة:</strong> واجهة رفع الفيديو والمعاينة جاهزة. محرك تحليل الفيديو بالذكاء الاصطناعي لم يتم ربطه بالخدمة الخلفية بعد؛ لن ندّعي استخراج أزمنة آلية قبل توصيله.</div>
+ <div class="notice"><strong>حالة الميزة:</strong> واجهة رفع الفيديو والمعاينة جاهزة. محرك تحليل الفيديو باستخدام Gemini لم يتم ربطه بالخدمة الخلفية بعد؛ لن ندّعي استخراج أزمنة آلية قبل توصيله.</div>
  <div class="grid2">
   <div class="panel">
    <div class="panel-title"><h3>1. فيديو العملية</h3><span class="sub">عامل واحد · عملية واحدة</span></div>
@@ -261,13 +261,13 @@ async function prepareVideoStudy(){
  const f=document.getElementById('videoFile').files[0],name=val('videoTaskName').trim(),station=val('videoStation');
  if(!f)return toast('اختَر فيديو للعملية أولًا');if(!name)return toast('اكتب اسم العملية أولًا');if(!station)return toast('أضف محطة واحدة على الأقل');
  if(f.size>100*1024*1024)return toast('حجم الفيديو أكبر من 100 MB؛ قصّ المقطع أو قلل حجمه');
- const status=document.getElementById('videoStatus'),btn=document.querySelector('#page-video button.primary');btn.disabled=true;btn.textContent='جارٍ التحليل...';status.textContent='جارٍ استخراج إطارات تمثيلية وإرسالها لمحرك الرؤية.';
+ const status=document.getElementById('videoStatus'),btn=document.querySelector('#page-video button.primary');btn.disabled=true;btn.textContent='جارٍ التحليل...';status.textContent='جارٍ استخراج إطارات تمثيلية وإرسالها إلى Gemini لتحليلها.';
  try{const {frames,duration}=await sampleVideoFrames(f,8);
  const resp=await fetch('/api/analyze-video',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({frames,taskName:name,station,model:val('videoModel'),notes:val('videoNotes'),videoDuration:duration})});
  const data=await resp.json();if(!resp.ok)throw new Error(data.error||'فشل تحليل الفيديو');
  latestVideoAnalysis={...data.result,meta:{taskName:name,station,operator:val('videoOperator'),model:val('videoModel'),videoFile:f.name,duration_s:duration,analyzedAt:new Date().toISOString(),engine:data.model,frames:data.sampledFrames}};
  renderVideoAnalysis(latestVideoAnalysis);status.innerHTML='<b style="color:var(--green)">اكتمل التحليل الأولي.</b> راجع التوقيتات يدويًا قبل اعتمادها.';toast('اكتمل التحليل الأولي');
- }catch(e){status.innerHTML='<b style="color:var(--red)">تعذر التحليل:</b> '+esc(e.message)+'<br>تحقق من نشر API وضبط OPENAI_API_KEY في Vercel.';toast('لم يكتمل تحليل الفيديو')}
+ }catch(e){status.innerHTML='<b style="color:var(--red)">تعذر التحليل:</b> '+esc(e.message)+'<br>تحقق من نشر التطبيق وضبط GEMINI_API_KEY في Vercel، ومن الحصة المجانية للنموذج.';toast('لم يكتمل تحليل الفيديو')}
  finally{btn.disabled=false;btn.textContent='تحليل الفيديو بالذكاء الاصطناعي'}
 }
 function renderVideoAnalysis(r){
