@@ -4,51 +4,64 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-  if (!process.env.OPENAI_API_KEY) return res.status(503).json({ error: "AI engine is not configured. Add OPENAI_API_KEY in Vercel project environment variables." });
+  if (!process.env.GEMINI_API_KEY) return res.status(503).json({ error: "Gemini is not configured. Add GEMINI_API_KEY in Vercel Production environment variables." });
+
   try {
     const { frames, taskName, station, model, notes, videoDuration } = req.body || {};
     if (!Array.isArray(frames) || frames.length < 3 || frames.length > 24) return res.status(400).json({ error: "Send 3 to 24 sampled frames." });
     if (!taskName || !station) return res.status(400).json({ error: "Task name and station are required." });
-    const content = [{
-      type: "input_text",
+
+    const parts = [{
       text: [
         "You are an industrial engineering assistant conducting a PRELIMINARY video-based time study.",
-        "Frames are sampled from one worker performing one operation. Each frame includes a timestamp in seconds. Infer only what is visually supported. Do not invent exact event boundaries between sparse frames; mark estimates as approximate and confidence low when necessary.",
+        "Frames are sampled from one worker performing one operation. Each frame has a timestamp in seconds. Infer only what is visually supported. Do not invent exact event boundaries between sparse frames; mark estimates approximate and confidence low when needed.",
         "Return ONLY valid JSON with keys: summary, cycle_time_estimate_s, confidence, limitations, elements, motion_observations, improvement_opportunities, reviewer_checks.",
-        "elements must be an array of objects: {name, start_s, end_s, duration_s, category, evidence, confidence, needs_review}. Use category 'VA', 'NVA', or 'Unclassified' and explain that classifications are provisional.",
+        "elements must be an array of objects: {name, start_s, end_s, duration_s, category, evidence, confidence, needs_review}. Use category 'VA', 'NVA', or 'Unclassified'; classifications are provisional.",
         "motion_observations and improvement_opportunities must be arrays of concise strings. reviewer_checks must be an array of items requiring human validation.",
-        "The timestamps are reference times, not guaranteed exact cycle boundaries. Do not claim standard time, rating-adjusted time, allowances, or statistical sufficiency from one video.",
+        "Timestamps are reference times, not guaranteed exact event boundaries. Do not claim standard time, rating-adjusted time, allowances, or statistical sufficiency from one video.",
         "Operation: " + taskName + "; station: " + station + "; model: " + (model || "unspecified") + "; video duration seconds: " + (videoDuration || "unknown") + "; notes: " + (notes || "none") + ".",
-        "Frames follow in chronological order; each frame's caption gives its timestamp."
+        "Frames follow in chronological order. Each image is preceded by its timestamp."
       ].join("\n")
     }];
+
+    let validFrames = 0;
     for (const frame of frames) {
-      if (!frame || typeof frame.image !== "string" || !/^data:image\/(jpeg|png|webp);base64,/.test(frame.image)) continue;
-      content.push({ type: "input_text", text: "Frame timestamp: " + Number(frame.t).toFixed(2) + " seconds." });
-      content.push({ type: "input_image", image_url: frame.image, detail: "high" });
+      if (!frame || typeof frame.image !== "string") continue;
+      const match = frame.image.match(/^data:image\/(jpeg|png|webp);base64,(.+)$/);
+      if (!match) continue;
+      parts.push({ text: "Frame timestamp: " + Number(frame.t).toFixed(2) + " seconds." });
+      parts.push({ inline_data: { mime_type: "image/" + match[1], data: match[2] } });
+      validFrames++;
     }
-    if (content.length < 7) return res.status(400).json({ error: "No valid image frames were provided." });
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    if (validFrames < 3) return res.status(400).json({ error: "At least 3 valid image frames are required." });
+
+    const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const response = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + encodeURIComponent(modelName) + ":generateContent", {
       method: "POST",
-      headers: { "Authorization": "Bearer " + process.env.OPENAI_API_KEY, "Content-Type": "application/json" },
+      headers: { "x-goog-api-key": process.env.GEMINI_API_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: process.env.OPENAI_VISION_MODEL || "gpt-5.4-mini",
-        input: [{ role: "user", content }],
-        max_output_tokens: 4500
+        contents: [{ role: "user", parts }],
+        generationConfig: { responseMimeType: "application/json", maxOutputTokens: 4500, temperature: 0.2 }
       })
     });
+
     const payload = await response.json();
-    if (!response.ok) return res.status(response.status).json({ error: payload.error?.message || "Vision model request failed." });
-    const text = (payload.output || []).flatMap(o => o.content || []).filter(c => c.type === "output_text").map(c => c.text).join("\n");
-    if (!text) return res.status(502).json({ error: "The model returned no text." });
+    if (!response.ok) {
+      const apiMessage = payload.error?.message || "Gemini request failed.";
+      const status = response.status === 429 ? 429 : response.status === 400 ? 400 : response.status === 403 ? 403 : 502;
+      return res.status(status).json({ error: apiMessage });
+    }
+    const text = (payload.candidates || []).flatMap(c => c.content?.parts || []).map(p => p.text || "").join("\n").trim();
+    if (!text) return res.status(502).json({ error: "Gemini returned no text. Try a shorter or clearer video." });
+
     let result;
     try {
       const clean = text.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
       result = JSON.parse(clean);
     } catch {
-      return res.status(502).json({ error: "Could not parse structured analysis. Please retry with a shorter video." });
+      return res.status(502).json({ error: "Gemini did not return valid structured JSON. Please retry." });
     }
-    return res.status(200).json({ result, model: process.env.OPENAI_VISION_MODEL || "gpt-5.4-mini", sampledFrames: content.filter(c => c.type === "input_image").length });
+    return res.status(200).json({ result, model: modelName, sampledFrames: validFrames, provider: "Gemini API" });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Unexpected analysis error." });
   }
