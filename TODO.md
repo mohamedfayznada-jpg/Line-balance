@@ -26,5 +26,12 @@
 - [x] Backup/metrics/validation smoke checks pass.
 - [ ] Changes are committed and pushed to `main`.
 
+## Yamazumi and production-control view
+- [x] The overview page shows a lightweight Yamazumi snapshot without third-party chart dependencies.
+- [x] The balancing page shows a large stacked Yamazumi chart: each station is a column, each operation is a colored segment, Cycle Time is the column total, and Takt is a red dashed reference line.
+- [x] The balancing page shows a per-operation Cycle Time chart with a Takt reference and bottleneck highlighting.
+- [x] The chart includes a legend, numeric axes, station labels, and an engineering interpretation note.
+- [x] The chart renders from the current assignment or the proposed scenario, and remains diagnostic rather than an automatic approval.
+
 ## Deferred production phase
 Authentication, multi-user synchronization, a managed database, audit history, and a full mathematical optimization solver remain intentionally deferred. The current heuristic is clearly labeled as a proposal and keeps the browser-only prototype deployable.

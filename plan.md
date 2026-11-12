@@ -20,5 +20,7 @@ Upgrade the existing Arabic-first prototype into a safer and more useful enginee
 ## Design decisions
 The existing visual direction remains: a branded industrial dashboard using the burgundy/gold/coral palette, compact cards, clear Arabic labels, and explicit engineering warnings. New metrics will appear in the balancing page, and automatic suggestions will remain clearly labeled as heuristic proposals requiring review.
 
+The production-control view now uses dependency-free SVG charts so it remains fast and publishable on GitHub Pages. The Yamazumi chart stacks operation times by station, draws a red Takt reference line, labels the station Cycle Time total, and marks stations above Takt. A second horizontal chart shows each individual operation against the same Takt reference. The overview receives a compact snapshot while the balancing page receives the full-width engineering view.
+
 ## Delivery boundary
 This iteration does not introduce authentication, multi-user synchronization, or a production database. Those remain the next platform phase after validating the engineering workflow with real shop-floor data.
