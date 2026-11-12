@@ -1,7 +1,11 @@
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const origin = req.headers.origin;
+  const allowedOrigin = process.env.ALLOWED_ORIGIN || "*";
+  if (allowedOrigin === "*" || !origin || origin === allowedOrigin) res.setHeader("Access-Control-Allow-Origin", allowedOrigin === "*" ? "*" : origin);
+  res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Cache-Control", "no-store");
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   if (!process.env.GEMINI_API_KEY) return res.status(503).json({ error: "محرك التحليل غير مهيأ. تحقّق من إعداد GEMINI_API_KEY في بيئة الإنتاج على Vercel." });
@@ -9,7 +13,10 @@ export default async function handler(req, res) {
   try {
     const { frames, taskName, station, model, notes, videoDuration } = req.body || {};
     if (!Array.isArray(frames) || frames.length < 3 || frames.length > 24) return res.status(400).json({ error: "Send 3 to 24 sampled frames." });
-    if (!taskName || !station) return res.status(400).json({ error: "Task name and station are required." });
+    if (typeof taskName !== "string" || taskName.trim().length < 2 || taskName.length > 160) return res.status(400).json({ error: "Task name must be between 2 and 160 characters." });
+    if (typeof station !== "string" || station.trim().length < 1 || station.length > 120) return res.status(400).json({ error: "Station is required and must be short." });
+    if (model != null && (typeof model !== "string" || model.length > 120)) return res.status(400).json({ error: "Model is too long." });
+    if (notes != null && (typeof notes !== "string" || notes.length > 2000)) return res.status(400).json({ error: "Notes are too long." });
 
     const parts = [{
       text: [
@@ -27,9 +34,10 @@ export default async function handler(req, res) {
 
     let validFrames = 0;
     for (const frame of frames) {
-      if (!frame || typeof frame.image !== "string") continue;
+      if (!frame || typeof frame.image !== "string" || !Number.isFinite(Number(frame.t))) continue;
       const match = frame.image.match(/^data:image\/(jpeg|png|webp);base64,(.+)$/);
       if (!match) continue;
+      if (match[2].length > 700000) return res.status(413).json({ error: "A sampled frame is too large. Reduce video preview size." });
       parts.push({ text: "Frame timestamp: " + Number(frame.t).toFixed(2) + " seconds." });
       parts.push({ inline_data: { mime_type: "image/" + match[1], data: match[2] } });
       validFrames++;
@@ -67,6 +75,11 @@ export default async function handler(req, res) {
         result = JSON.parse(clean);
       }
       if (!result || typeof result !== "object" || !Array.isArray(result.elements)) throw new Error("Missing required analysis fields");
+      result.elements = result.elements.slice(0, 80).map((item) => {
+        const start = Number(item?.start_s), end = Number(item?.end_s);
+        return { ...item, start_s: Number.isFinite(start) ? Math.max(0, start) : null, end_s: Number.isFinite(end) ? Math.max(0, end) : null, duration_s: Number.isFinite(Number(item?.duration_s)) ? Math.max(0, Number(item.duration_s)) : null, needs_review: item?.needs_review !== false };
+      });
+      if (typeof result.summary !== "string") result.summary = "نتيجة أولية تحتاج إلى مراجعة بشرية.";
     } catch {
       const finishReason = payload.candidates?.[0]?.finishReason || "unknown";
       const message = finishReason === "MAX_TOKENS" ? "التحليل أطول من الحد المسموح. جرّب فيديو أقصر أو أعد المحاولة." : "لم يُرجع النموذج نتيجة منظمة قابلة للقراءة. جرّب إعادة التحليل؛ وإذا تكرر الخطأ فقصّر الفيديو.";
